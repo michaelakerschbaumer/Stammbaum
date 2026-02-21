@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Stammbaum - interaktive Ansicht</title>
+  <style>
+    :root{--bg:#0b0d10;--panel:#11151b;--muted:#9aa4b2;--text:#e8eef7;--accent:#6aa9ff;--line:#233043;}
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;background:var(--bg);color:var(--text);}
+    header{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+    header h1{font-size:16px;margin:0;font-weight:650;letter-spacing:0.2px}
+    .pill{font-size:12px;color:var(--muted);border:1px solid var(--line);padding:6px 10px;border-radius:999px;background:rgba(255,255,255,0.02)}
+    .wrap{display:grid;grid-template-columns:360px 1fr;min-height:calc(100vh - 58px)}
+    @media (max-width: 980px){.wrap{grid-template-columns:1fr;}}
+    .side{border-right:1px solid var(--line);background:var(--panel);padding:14px 12px}
+    @media (max-width: 980px){.side{border-right:none;border-bottom:1px solid var(--line)}}
+    .section{margin-bottom:14px}
+    .label{font-size:12px;color:var(--muted);margin:0 0 6px 2px}
+    input, button, select{font:inherit}
+    .searchRow{display:flex;gap:8px}
+    .searchRow input{flex:1;background:#0c1016;border:1px solid var(--line);color:var(--text);border-radius:10px;padding:10px 10px}
+    .searchRow button{background:rgba(106,169,255,0.12);border:1px solid rgba(106,169,255,0.35);color:var(--text);border-radius:10px;padding:10px 12px;cursor:pointer}
+    .searchRow button:hover{background:rgba(106,169,255,0.18)}
+    .results{max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:10px;background:#0c1016}
+    .item{padding:10px 10px;border-bottom:1px solid rgba(35,48,67,0.55);cursor:pointer}
+    .item:last-child{border-bottom:none}
+    .item .n{font-weight:650}
+    .item .m{font-size:12px;color:var(--muted);margin-top:2px}
+    .item:hover{background:rgba(255,255,255,0.03)}
+    .details{border:1px solid var(--line);border-radius:12px;padding:12px;background:#0c1016}
+    .details h2{margin:0 0 4px 0;font-size:16px}
+    .kv{font-size:13px;color:var(--muted);line-height:1.5}
+    .kv b{color:var(--text);font-weight:650}
+    .links{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+    .tag{font-size:12px;border:1px solid var(--line);border-radius:999px;padding:6px 10px;cursor:pointer;color:var(--text);background:rgba(255,255,255,0.02)}
+    .tag:hover{border-color:rgba(106,169,255,0.5)}
+    .main{position:relative}
+    #chart{width:100%;height:calc(100vh - 58px);overflow:auto}
+    svg{width:1600px;height:900px}
+    .node rect{fill:#0c1016;stroke:#2b3a52;stroke-width:1;rx:10;ry:10}
+    .node text{fill:var(--text);font-size:12px}
+    .node .sub{fill:var(--muted);font-size:11px}
+    .link{fill:none;stroke:#2b3a52;stroke-width:1.2}
+    .hint{position:absolute;left:12px;bottom:12px;font-size:12px;color:var(--muted);background:rgba(17,21,27,0.8);border:1px solid var(--line);padding:8px 10px;border-radius:10px}
+    a{color:var(--accent)}
+  </style>
+</head>
+<body>
+<header>
+  <h1>Stammbaum - interaktive Ansicht</h1>
+  <div class="pill" id="counts">lädt...</div>
+  <div class="pill">Tipp: Person suchen - klicken - Baum springt dorthin</div>
+</header>
+
+<div class="wrap">
+  <aside class="side">
+    <div class="section">
+      <p class="label">Person suchen (Name oder ID wie @I123@)</p>
+      <div class="searchRow">
+        <input id="q" placeholder="z.B. Kerschbaumer oder Leopold" autocomplete="off" />
+        <button id="go">Suchen</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <p class="label">Treffer</p>
+      <div class="results" id="results"></div>
+    </div>
+
+    <div class="section">
+      <p class="label">Details</p>
+      <div class="details" id="details">
+        <h2 id="d_name">-</h2>
+        <div class="kv" id="d_meta"></div>
+        <div class="links" id="d_links"></div>
+      </div>
+    </div>
+
+    <div class="section">
+      <p class="label">Ansicht</p>
+      <div class="kv">
+        - Klick auf Karte: Fokus setzen<br/>
+        - Doppelklick: Kinder ein/ausklappen<br/>
+        - Mausrad/Trackpad: Zoom (im Browser)<br/>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div id="chart"></div>
+    <div class="hint">Wenn du das auf GitHub Pages hostest: diese Seite ist komplett statisch (kein Server nötig).</div>
+  </main>
+</div>
+
+<script src="data.js"></script>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+(function(){
+  const DATA = window.GED_DATA;
+  const people = DATA.people;
+
+  const countsEl = document.getElementById("counts");
+  countsEl.textContent = `${DATA.meta.counts.individuals} Personen - ${DATA.meta.counts.families} Familien`;
+
+  const q = document.getElementById("q");
+  const results = document.getElementById("results");
+  const btn = document.getElementById("go");
+
+  const dName = document.getElementById("d_name");
+  const dMeta = document.getElementById("d_meta");
+  const dLinks = document.getElementById("d_links");
+
+  function norm(s){ return (s||"").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu,""); }
+  function fmtName(n){
+    if(!n) return "(ohne Name)";
+    // GEDCOM Name: Given /Surname/
+    const parts = n.split("/");
+    if(parts.length>=2){
+      const given = parts[0].trim();
+      const sur = parts[1].trim();
+      return (given ? given + " " : "") + sur;
+    }
+    return n.replaceAll("/","").trim();
+  }
+  function yearOf(dateStr){
+    if(!dateStr) return "";
+    const m = String(dateStr).match(/(\d{4})/);
+    return m ? m[1] : "";
+  }
+  function shortLife(p){
+    const by = yearOf(p.birt?.date);
+    const dy = yearOf(p.deat?.date);
+    if(by && dy) return `${by} - ${dy}`;
+    if(by) return `* ${by}`;
+    if(dy) return `† ${dy}`;
+    return "";
+  }
+
+  // Build search index
+  const index = Object.values(people).map(p => ({
+    id: p.id,
+    name: fmtName(p.name),
+    raw: p.name || "",
+    key: norm(fmtName(p.name) + " " + (p.name||"") + " " + p.id),
+    life: shortLife(p)
+  }));
+
+  function renderResults(list){
+    results.innerHTML = "";
+    if(list.length===0){
+      results.innerHTML = `<div class="item"><div class="n">Keine Treffer</div><div class="m">Suchbegriff ändern</div></div>`;
+      return;
+    }
+    for(const it of list.slice(0,60)){
+      const div = document.createElement("div");
+      div.className = "item";
+      div.innerHTML = `<div class="n">${it.name}</div><div class="m">${it.id} ${it.life ? " - " + it.life : ""}</div>`;
+      div.addEventListener("click", () => focus(it.id));
+      results.appendChild(div);
+    }
+  }
+
+  function search(){
+    const s = norm(q.value.trim());
+    if(!s){ renderResults(index.slice(0,40)); return; }
+    const hits = index.filter(it => it.key.includes(s));
+    renderResults(hits);
+  }
+
+  btn.addEventListener("click", search);
+  q.addEventListener("keydown", (e)=>{ if(e.key==="Enter") search(); });
+  q.addEventListener("input", ()=>{ if(q.value.trim().length>=2) search(); });
+
+  // ---- Tree rendering (descendants view) ----
+  const chart = document.getElementById("chart");
+  const width = 1600, height = 900;
+
+  const svg = d3.select("#chart").append("svg")
+    .attr("viewBox", [0,0,width,height])
+    .style("background", "transparent");
+
+  const g = svg.append("g").attr("transform","translate(40,40)");
+
+  svg.call(d3.zoom().scaleExtent([0.3, 2.5]).on("zoom", (event)=>{
+    g.attr("transform", event.transform);
+  }));
+
+  const nodeW = 210, nodeH = 54;
+
+  function buildDescTree(rootId, depthLimit=6){
+    // Build a D3 hierarchy object with lazy children toggling.
+    const seen = new Set();
+    function rec(id, depth){
+      const p = people[id];
+      if(!p) return { id, missing:true, name:"(unbekannt)", children:[] };
+      const obj = { id, name: fmtName(p.name), life: shortLife(p), _children: null, children: [] };
+      if(depth < depthLimit){
+        const kids = (p.children||[]).filter(k => people[k]);
+        obj.children = kids.map(k => rec(k, depth+1));
+      } else {
+        const kids = (p.children||[]).filter(k => people[k]);
+        obj._children = kids.map(k => rec(k, depth+1));
+        obj.children = [];
+      }
+      return obj;
+    }
+    return rec(rootId,0);
+  }
+
+  let rootId = DATA.meta.default_root || Object.keys(people)[0];
+  let root = d3.hierarchy(buildDescTree(rootId, 5));
+
+  root.x0 = 0; root.y0 = 0;
+
+  function update(source){
+    const tree = d3.tree().nodeSize([nodeH+18, nodeW+40]);
+    tree(root);
+
+    // compute bounds
+    let left = root, right = root;
+    root.eachBefore(n => { if(n.x < left.x) left = n; if(n.x > right.x) right = n; });
+    const h = right.x - left.x + 120;
+
+    svg.attr("height", h);
+
+    const nodes = root.descendants();
+    const links = root.links();
+
+    // links
+    const link = g.selectAll("path.link").data(links, d => d.target.data.id);
+    link.enter().append("path")
+      .attr("class","link")
+      .attr("d", d => {
+        const o = {x: source.x0, y: source.y0};
+        return diagonal({source:o, target:o});
+      })
+      .merge(link)
+      .transition().duration(250)
+      .attr("d", diagonal);
+
+    link.exit().transition().duration(250)
+      .attr("d", d => {
+        const o = {x: source.x, y: source.y};
+        return diagonal({source:o, target:o});
+      }).remove();
+
+    // nodes
+    const node = g.selectAll("g.node").data(nodes, d => d.data.id);
+
+    const nodeEnter = node.enter().append("g")
+      .attr("class","node")
+      .attr("transform", d => `translate(${source.y0},${source.x0})`)
+      .style("cursor","pointer")
+      .on("click", (event,d) => { select(d.data.id); })
+      .on("dblclick", (event,d) => { toggle(d); update(d); });
+
+    nodeEnter.append("rect")
+      .attr("width", nodeW)
+      .attr("height", nodeH);
+
+    nodeEnter.append("text")
+      .attr("x", 12)
+      .attr("y", 20)
+      .text(d => d.data.name);
+
+    nodeEnter.append("text")
+      .attr("class","sub")
+      .attr("x", 12)
+      .attr("y", 40)
+      .text(d => d.data.life || "");
+
+    const nodeUpdate = nodeEnter.merge(node);
+    nodeUpdate.transition().duration(250)
+      .attr("transform", d => `translate(${d.y},${d.x})`);
+
+    node.exit().transition().duration(250)
+      .attr("transform", d => `translate(${source.y},${source.x})`)
+      .remove();
+
+    // stash old positions
+    root.eachBefore(d => { d.x0=d.x; d.y0=d.y; });
+  }
+
+  function diagonal(d){
+    return d3.linkHorizontal()
+      .x(d => d.y)
+      .y(d => d.x)(d);
+  }
+
+  function toggle(d){
+    if(d.children && d.children.length){
+      d._children = d.children;
+      d.children = [];
+    } else if(d._children){
+      d.children = d._children;
+      d._children = null;
+    } else if(d.data && people[d.data.id]){
+      // if no cached _children, generate on demand
+      const p = people[d.data.id];
+      const kids = (p.children||[]).filter(k => people[k]).map(k => ({ id:k, name: fmtName(people[k].name), life: shortLife(people[k]) }));
+      d._children = kids.map(k => d3.hierarchy({id:k.id,name:k.name,life:k.life,children:[]})); // minimal
+      d.children = d._children;
+      d._children = null;
+    }
+  }
+
+  function select(id){
+    const p = people[id];
+    if(!p) return;
+    dName.textContent = fmtName(p.name) + " " + (p.id || "");
+    const b = p.birt || {};
+    const d = p.deat || {};
+    const parts = [];
+    if(b.date || b.plac) parts.push(`<b>Geburt:</b> ${(b.date||"")}${(b.date&&b.plac)?", ":""}${(b.plac||"")}`);
+    if(d.date || d.plac) parts.push(`<b>Tod:</b> ${(d.date||"")}${(d.date&&d.plac)?", ":""}${(d.plac||"")}`);
+    parts.push(`<b>Geschlecht:</b> ${p.sex || "-"}`);
+    parts.push(`<b>Kinder:</b> ${(p.children||[]).length}`);
+    parts.push(`<b>Partner:</b> ${(p.spouses||[]).length}`);
+    dMeta.innerHTML = parts.join("<br/>");
+
+    dLinks.innerHTML = "";
+    function mkTag(label, pid){
+      const el = document.createElement("div");
+      el.className = "tag";
+      el.textContent = label;
+      el.addEventListener("click", ()=>focus(pid));
+      return el;
+    }
+    (p.parents||[]).forEach(pp => {
+      if(people[pp]) dLinks.appendChild(mkTag("Eltern: " + fmtName(people[pp].name), pp));
+    });
+    (p.spouses||[]).forEach(sp => {
+      if(people[sp]) dLinks.appendChild(mkTag("Partner: " + fmtName(people[sp].name), sp));
+    });
+    (p.children||[]).slice(0,12).forEach(ch => {
+      if(people[ch]) dLinks.appendChild(mkTag("Kind: " + fmtName(people[ch].name), ch));
+    });
+    if((p.children||[]).length>12){
+      const more = document.createElement("div");
+      more.className="tag";
+      more.textContent = `+ ${(p.children||[]).length-12} weitere Kinder`;
+      dLinks.appendChild(more);
+    }
+  }
+
+  function focus(id){
+    // rebuild tree with id as root
+    rootId = id;
+    root = d3.hierarchy(buildDescTree(rootId, 5));
+    root.x0 = 0; root.y0 = 0;
+    update(root);
+    select(id);
+
+    // reset zoom to keep it readable
+    svg.transition().duration(250).call(
+      d3.zoom().transform,
+      d3.zoomIdentity.translate(40,40).scale(1)
+    );
+  }
+
+  // initial
+  renderResults(index.slice(0,40));
+  focus(rootId);
+
+})();
+</script>
+</body>
+</html>
